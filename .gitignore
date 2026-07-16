@@ -1,0 +1,11 @@
+# Ignorar configurações locais e credenciais sensíveis
+.env
+
+# Ignorar base de dados bruta (arquivos pesados)
+*.zip
+*.csv
+data/
+
+# Ignorar cache do Python
+__pycache__/
+*.pyc
