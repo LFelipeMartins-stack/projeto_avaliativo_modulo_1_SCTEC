@@ -10,7 +10,7 @@ import numpy as np
 import re  
 from banco import conectar, executar, inserir_em_lote
 
-# Mapeamento de siglas para nomes de estados por extenso (Estilo Cleberson)
+# Mapeamento de siglas para nomes de estados por extenso
 MAPA_UFS = {
     'AC': 'Acre', 'AL': 'Alagoas', 'AP': 'Amapá', 'AM': 'Amazonas',
     'BA': 'Bahia', 'CE': 'Ceará', 'DF': 'Distrito Federal', 'ES': 'Espírito Santo',
@@ -26,17 +26,17 @@ MAPA_UFS = {
 # ---------------------------------------------------------------------------
 
 def obter_destino_consolidado(destino_str) -> str:
-    """
-    Identifica o estado ou país de destino consolidado de uma viagem,
-    filtrando o 'DF' de trânsito de partida/retorno.
-    """
     if not destino_str or pd.isna(destino_str):
         return "Não Informado"
     
-    # 1. Encontra todas as siglas de UF (ex: /AC, /SP, /RJ) contidas no itinerário
+    # INTERCEPTAÇÃO: Padroniza informações protegidas por sigilo
+    if re.search(r'(sigilo|protegida|secreto)', str(destino_str), re.IGNORECASE):
+        return "Sigiloso"
+    
+    # Encontra todas as siglas de UF (ex: /AC, /SP, /RJ) contidas no itinerário
     ufs_encontradas = re.findall(r'/([A-Z]{2})\b', str(destino_str))
     
-    # 2. Filtra 'DF' (Brasília), pois quase sempre representa apenas o ponto de partida/retorno
+    # Filtra 'DF' (Brasília), pois quase sempre representa apenas o ponto de partida/retorno
     ufs_validas = [uf for uf in ufs_encontradas if uf != 'DF']
     
     if ufs_validas:
@@ -46,7 +46,7 @@ def obter_destino_consolidado(destino_str) -> str:
         # Se a viagem ocorreu exclusivamente dentro do DF ou se o DF foi a única UF detectada
         return MAPA_UFS.get(ufs_encontradas[0], ufs_encontradas[0])
     
-    # 3. Tratamento para viagens Internacionais (ex: "Abu Dabi/Emirados Árabes" -> "Emirados Árabes")
+    # Tratamento para viagens Internacionais (ex: "Abu Dabi/Emirados Árabes" -> "Emirados Árabes")
     partes = str(destino_str).split(',')
     for parte in partes:
         if '/' in parte:
