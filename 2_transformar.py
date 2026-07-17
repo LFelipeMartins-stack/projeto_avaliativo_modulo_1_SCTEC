@@ -7,11 +7,57 @@ e PostgreSQL para carga final da camada Silver.
 
 import pandas as pd
 import numpy as np
+import re  
 from banco import conectar, executar, inserir_em_lote
+
+# Mapeamento de siglas para nomes de estados por extenso (Estilo Cleberson)
+MAPA_UFS = {
+    'AC': 'Acre', 'AL': 'Alagoas', 'AP': 'Amapá', 'AM': 'Amazonas',
+    'BA': 'Bahia', 'CE': 'Ceará', 'DF': 'Distrito Federal', 'ES': 'Espírito Santo',
+    'GO': 'Goiás', 'MA': 'Maranhão', 'MT': 'Mato Grosso', 'MS': 'Mato Grosso do Sul',
+    'MG': 'Minas Gerais', 'PA': 'Pará', 'PB': 'Paraíba', 'PR': 'Paraná',
+    'PE': 'Pernambuco', 'PI': 'Piauí', 'RJ': 'Rio de Janeiro', 'RN': 'Rio Grande do Norte',
+    'RS': 'Rio Grande do Sul', 'RO': 'Rondônia', 'RR': 'Roraima', 'SC': 'Santa Catarina',
+    'SP': 'São Paulo', 'SE': 'Sergipe', 'TO': 'Tocantins'
+}
 
 # ---------------------------------------------------------------------------
 # Funções Auxiliares de Tratamento de Dados (Transform)
 # ---------------------------------------------------------------------------
+
+def obter_destino_consolidado(destino_str) -> str:
+    """
+    Identifica o estado ou país de destino consolidado de uma viagem,
+    filtrando o 'DF' de trânsito de partida/retorno.
+    """
+    if not destino_str or pd.isna(destino_str):
+        return "Não Informado"
+    
+    # 1. Encontra todas as siglas de UF (ex: /AC, /SP, /RJ) contidas no itinerário
+    ufs_encontradas = re.findall(r'/([A-Z]{2})\b', str(destino_str))
+    
+    # 2. Filtra 'DF' (Brasília), pois quase sempre representa apenas o ponto de partida/retorno
+    ufs_validas = [uf for uf in ufs_encontradas if uf != 'DF']
+    
+    if ufs_validas:
+        # Retorna o nome por extenso do primeiro estado de destino real
+        return MAPA_UFS.get(ufs_validas[0], ufs_validas[0])
+    elif ufs_encontradas:
+        # Se a viagem ocorreu exclusivamente dentro do DF ou se o DF foi a única UF detectada
+        return MAPA_UFS.get(ufs_encontradas[0], ufs_encontradas[0])
+    
+    # 3. Tratamento para viagens Internacionais (ex: "Abu Dabi/Emirados Árabes" -> "Emirados Árabes")
+    partes = str(destino_str).split(',')
+    for parte in partes:
+        if '/' in parte:
+            cidade_pais = parte.split('/')
+            if len(cidade_pais) > 1:
+                pais_limpo = cidade_pais[1].strip()
+                if pais_limpo not in MAPA_UFS:
+                    return pais_limpo # Retorna o País de destino
+                
+    return str(destino_str).split(',')[0].strip()
+
 
 def limpar_decimal(serie: pd.Series) -> pd.Series:
     """
@@ -21,15 +67,12 @@ def limpar_decimal(serie: pd.Series) -> pd.Series:
     if serie is None or serie.empty:
         return pd.Series(0.00, index=serie.index)
     
-    # .str.lower() padroniza os textos para busca exata sem case=False
     s = serie.astype(str).str.strip().str.lower()
     s = s.str.replace(r'\.', '', regex=True)  # Remove ponto de milhar
     s = s.str.replace(',', '.', regex=False)  # Substitui vírgula decimal por ponto
     s = s.replace(['sem informação', 'nan', 'null', 'none', ''], '0.00')
     
-    # Converte e garante que valores inválidos virem 0.00
     num = pd.to_numeric(s, errors="coerce").fillna(0.00)
-    # Garante a regra de negócio do CHECK (valores >= 0)
     return num.clip(lower=0.00)
 
 
@@ -44,8 +87,6 @@ def tratar_nulos_para_db(df: pd.DataFrame) -> pd.DataFrame:
     Garante que NaNs, NaTs e floats invalidos do Pandas sejam convertidos 
     para o objeto None (que vira NULL nativamente no PostgreSQL).
     """
-    # Convertemos o DF inteiro para o tipo genérico 'object'.
-    # Isso impede que o Pandas force None a virar NaN em colunas numéricas ou de data.
     return df.astype(object).where(pd.notnull(df), None)
 
 # ---------------------------------------------------------------------------
@@ -79,15 +120,16 @@ def executar_etl_silver():
         
         # Constraint NOT NULL resolvida programaticamente
         df_silver_viagem['nome_orgao_superior'] = df_raw_viagem['nome_orgao_superior'].fillna("NÃO INFORMADO")
-        df_silver_viagem['nome_viajante'] = df_raw_viagem['nome_viajante']
+        df_silver_viagem['nome_viajante'] = df_raw_viajante = df_raw_viagem['nome_viajante']
         df_silver_viagem['cargo'] = df_raw_viagem['cargo']
         
         # Tratamento de Datas
         df_silver_viagem['data_inicio'] = limpar_data(df_raw_viagem['data_inicio'])
         df_silver_viagem['data_fim'] = limpar_data(df_raw_viagem['data_fim'])
         
-        # Textos longos
+        # Textos longos e Enriquecimento de Destino (Estado por extenso)
         df_silver_viagem['destinos'] = df_raw_viagem['destinos']
+        df_silver_viagem['destino_estado'] = df_raw_viagem['destinos'].apply(obter_destino_consolidado)
         df_silver_viagem['motivo'] = df_raw_viagem['motivo']
         
         # Tratamento de Decimais com validação do CHECK >= 0
@@ -97,7 +139,6 @@ def executar_etl_silver():
         df_silver_viagem['valor_outros_gastos'] = limpar_decimal(df_raw_viagem['valor_outros_gastos'])
         
         # COLUNAS CALCULADAS
-        # valor_total = (diarias + passagens + outros) - devolucao
         df_silver_viagem['valor_total'] = (
             df_silver_viagem['valor_diarias'] + 
             df_silver_viagem['valor_passagens'] + 
@@ -122,11 +163,8 @@ def executar_etl_silver():
         print("[*] Transformando silver_pagamento...")
         df_silver_pagamento = pd.DataFrame()
         df_silver_pagamento['id_viagem'] = df_raw_pagamento['id_viagem'].astype(str).str.strip()
-        
-        # Validação de integridade referencial (Foreign Key em memória)
         df_silver_pagamento = df_silver_pagamento[df_silver_pagamento['id_viagem'].isin(viagens_validas)].copy()
         
-        # Mapeamento do restante dos campos baseando-se no índice original filtrado
         indices_filtrados = df_silver_pagamento.index
         df_silver_pagamento['num_proposta'] = df_raw_pagamento.loc[indices_filtrados, 'num_proposta']
         df_silver_pagamento['nome_orgao_pagador'] = df_raw_pagamento.loc[indices_filtrados, 'nome_orgao_pagador']
@@ -142,11 +180,9 @@ def executar_etl_silver():
         print("[*] Transformando silver_passagem...")
         df_silver_passagem = pd.DataFrame()
         df_silver_passagem['id_viagem'] = df_raw_passagem['id_viagem'].astype(str).str.strip()
-        
-        # Integridade referencial (FK)
         df_silver_passagem = df_silver_passagem[df_silver_passagem['id_viagem'].isin(viagens_validas)].copy()
-        indices_filtrados = df_silver_passagem.index
         
+        indices_filtrados = df_silver_passagem.index
         df_silver_passagem['meio_transporte'] = df_raw_passagem.loc[indices_filtrados, 'meio_transporte']
         df_silver_passagem['pais_origem_ida'] = df_raw_passagem.loc[indices_filtrados, 'pais_origem_ida']
         df_silver_passagem['uf_origem_ida'] = df_raw_passagem.loc[indices_filtrados, 'uf_origem_ida']
@@ -166,16 +202,12 @@ def executar_etl_silver():
         print("[*] Transformando silver_trecho...")
         df_silver_trecho = pd.DataFrame()
         df_silver_trecho['id_viagem'] = df_raw_trecho['id_viagem'].astype(str).str.strip()
-        
-        # Integridade referencial (FK)
         df_silver_trecho = df_silver_trecho[df_silver_trecho['id_viagem'].isin(viagens_validas)].copy()
-        indices_filtrados = df_silver_trecho.index
         
-        # Conversão explícita para inteiro seguro
+        indices_filtrados = df_silver_trecho.index
         seq_limpa = pd.to_numeric(df_raw_trecho.loc[indices_filtrados, 'sequencia_trecho'], errors='coerce').fillna(1).astype(int)
         df_silver_trecho['sequencia_trecho'] = seq_limpa
         
-        # Tratamento da constraint UNIQUE (id_viagem, sequencia_trecho)
         df_silver_trecho.drop_duplicates(subset=['id_viagem', 'sequencia_trecho'], keep='first', inplace=True)
         indices_finais = df_silver_trecho.index
         
@@ -195,12 +227,13 @@ def executar_etl_silver():
         # ---------------------------------------------------------------------------
         print("\n[-] Iniciando carga (LOAD) na base de dados...")
         
+        # DDL Dinâmica: Garante a criação da nova coluna física na tabela silver_viagem antes de truncar e inserir
+        executar(conexao, "ALTER TABLE silver_viagem ADD COLUMN IF NOT EXISTS destino_estado VARCHAR(100);")
+        
         # Limpeza prévia para garantir a idempotência
         executar(conexao, "TRUNCATE TABLE silver_trecho, silver_passagem, silver_pagamento, silver_viagem CASCADE;")
         
-        # Carga sequencial estrita (Pai -> Filhos) respeitando as restrições físicas das Foreign Keys
-        
-        # Carga silver_viagem
+        # Carga silver_viagem (Mapeamento dinâmico que herda a nova coluna destino_estado do DataFrame)
         colunas_viagem = list(df_silver_viagem.columns)
         registros_viagem = [tuple(x) for x in df_silver_viagem.itertuples(index=False, name=None)]
         placeholders_viagem = ", ".join(["%s"] * len(colunas_viagem))

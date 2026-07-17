@@ -2,23 +2,35 @@
 gerar_notebook.py
 -----------------
 Gera programaticamente o arquivo '3_analise.ipynb' completo com as células de 
-Markdown, códigos de resolução de perguntas de negócio via Pandas e persistência da Camada Gold.
+Markdown, códigos de resolução de perguntas de negócio, o Dashboard Interativo 
+Tema Escuro (Estilo Power BI) e a gravação da Camada Gold agregada no PostgreSQL.
 """
 
 import json
+import os
 
-notebook = {
+filename = "3_analise.ipynb"
+target_dir = "/home/flip/Downloads/Projeto_final_SCTEC/"
+
+notebook_data = {
  "cells": [
   {
    "cell_type": "markdown",
    "metadata": {},
    "source": [
-    "# 🏆 Projeto Final - Camada Gold: Análise e Visualização\n",
+    "# 🏆 Projeto Final - Camada Gold: Análise, Visualização e Dashboard\n",
     "**Curso:** Análise de Dados com Python - SCtec  \n",
-    "**Objetivo:** Responder às perguntas estratégicas de negócio utilizando os dados refinados da camada **Silver**, gerar visualizações analíticas de alta fidelidade e persistir tabelas agregadas na camada **Gold** do PostgreSQL.\n",
+    "**Aluno:** L. Felipe Martins  \n",
+    "\n",
+    "Este Jupyter Notebook consolida a **Fase 3 (Camada Gold)** da nossa arquitetura de dados. \n",
+    "Aqui realizamos:\n",
+    "1. Resolução das **7 Perguntas de Negócio** com exibições textuais e gráficas estáticas e defensivas.\n",
+    "2. Um **Dashboard Interativo Integrado (Tema Escuro - Estilo Power BI)** usando Plotly e `ipywidgets` para análise em tempo real.\n",
+    "3. Persistência da tabela física agregada `gold_resumo_orgaos` no PostgreSQL com confirmação transacional (`commit`).\n",
+    "4. Validação final lendo os dados de volta do banco de dados.\n",
     "\n",
     "---\n",
-    "### 1. Configuração do Ambiente e Extração"
+    "### ⚙️ 1. Gerenciamento Automatizado de Dependências e Carga de Dados"
    ]
   },
   {
@@ -27,20 +39,54 @@ notebook = {
    "metadata": {},
    "outputs": [],
    "source": [
+    "import sys\n",
+    "import subprocess\n",
+    "\n",
+    "# Lista de dependências críticas para o ambiente interativo do Jupyter\n",
+    "dependencias = [\"plotly\", \"ipywidgets\", \"nbformat\"]\n",
+    "instalou = False\n",
+    "\n",
+    "for lib in dependencias:\n",
+    "    try:\n",
+    "        __import__(lib)\n",
+    "    except ImportError:\n",
+    "        print(f\"[*] Instalação automática da biblioteca ausente: {lib}...\")\n",
+    "        subprocess.check_call([\n",
+    "            sys.executable, \"-m\", \"pip\", \"install\", lib, \"--break-system-packages\"\n",
+    "        ])\n",
+    "        instalou = True\n",
+    "\n",
+    "if instalou:\n",
+    "    print(\"[SUCCESS] Dependências instaladas! Por favor, reinicie o Kernel do Jupyter para carregar as alterações.\")\n",
+    "else:\n",
+    "    print(\"[+] Todas as dependências necessárias estão presentes no ambiente!\")\n",
+    "\n",
     "import pandas as pd\n",
     "import matplotlib.pyplot as plt\n",
     "import seaborn as sns\n",
+    "import plotly.express as px\n",
+    "import plotly.graph_objects as go\n",
+    "from plotly.subplots import make_subplots\n",
+    "import ipywidgets as widgets\n",
+    "from ipywidgets import interact\n",
     "import warnings\n",
     "from banco import conectar, executar, inserir_em_lote\n",
     "\n",
-    "# Desativa os avisos de conexão legada do Pandas com o psycopg2\n",
     "warnings.filterwarnings('ignore')\n",
     "\n",
-    "# Configuração estética dos gráficos\n",
+    "# Configurações estéticas para os gráficos estáticos do Matplotlib\n",
     "sns.set_theme(style=\"whitegrid\")\n",
-    "plt.rcParams.update({'font.size': 11, 'axes.labelsize': 12, 'figure.titlesize': 16})\n",
+    "plt.rcParams.update({\n",
+    "    'font.size': 11,\n",
+    "    'axes.labelsize': 12,\n",
+    "    'figure.titlesize': 16,\n",
+    "    'text.color': 'black',\n",
+    "    'axes.labelcolor': 'black',\n",
+    "    'xtick.color': 'black',\n",
+    "    'ytick.color': 'black'\n",
+    "})\n",
     "\n",
-    "# Conecta ao PostgreSQL e extrai os dados refinados da Camada Silver\n",
+    "# Conexão com o PostgreSQL e carga dos dados refinados\n",
     "conexao = conectar()\n",
     "df_viagem = pd.read_sql_query(\"SELECT * FROM silver_viagem\", conexao)\n",
     "df_pagamento = pd.read_sql_query(\"SELECT * FROM silver_pagamento\", conexao)\n",
@@ -48,7 +94,7 @@ notebook = {
     "df_trecho = pd.read_sql_query(\"SELECT * FROM silver_trecho\", conexao)\n",
     "conexao.close()\n",
     "\n",
-    "print(f\"[*] Dados carregados com sucesso!\")\n",
+    "print(\"\\n[*] Dados da Camada Silver carregados com sucesso:\")\n",
     "print(f\"  • Viagens: {len(df_viagem):,}\")\n",
     "print(f\"  • Pagamentos: {len(df_pagamento):,}\")\n",
     "print(f\"  • Passagens: {len(df_passagem):,}\")\n",
@@ -76,21 +122,24 @@ notebook = {
    "metadata": {},
    "outputs": [],
    "source": [
-    "# Agregação e ordenação dos custos por órgão\n",
     "q1 = df_viagem.groupby('nome_orgao_superior')['valor_total'].sum().reset_index()\n",
     "q1 = q1.sort_values(by='valor_total', ascending=False).head(5)\n",
     "\n",
-    "# Exibição formatada\n",
-    "print(\"=== OS 5 ÓRGÃOS COM MAIOR CUSTO TOTAL ===\")\n",
+    "print(\"=== P1: OS 5 ÓRGÃOS COM MAIOR CUSTO TOTAL ===\")\n",
     "for idx, row in enumerate(q1.itertuples(), 1):\n",
     "    print(f\"{idx}. {row.nome_orgao_superior:<50} | R$ {row.valor_total:,.2f}\")\n",
     "\n",
-    "# Plotagem do gráfico\n",
-    "plt.figure(figsize=(10, 5))\n",
-    "ax = sns.barplot(x=q1['valor_total'] / 1_000_000, y=q1['nome_orgao_superior'], palette='Blues_r')\n",
+    "plt.figure(figsize=(10, 4))\n",
+    "ax = sns.barplot(\n",
+    "    x=q1['valor_total'] / 1_000_000, \n",
+    "    y=q1['nome_orgao_superior'], \n",
+    "    palette='Blues_r', \n",
+    "    hue=q1['nome_orgao_superior'], \n",
+    "    legend=False\n",
+    ")\n",
     "for container in ax.containers:\n",
     "    ax.bar_label(container, fmt='R$ %.1fM', padding=5)\n",
-    "plt.title(\"Top 5 Órgãos Superiores com Maior Gasto Acumulado (2025)\")\n",
+    "plt.title(\"Top 5 Órgãos Superiores por Gasto Acumulado (2025)\")\n",
     "plt.xlabel(\"Custo Total (Milhões de R$)\")\n",
     "plt.ylabel(\"\")\n",
     "plt.tight_layout()\n",
@@ -111,13 +160,12 @@ notebook = {
    "metadata": {},
    "outputs": [],
    "source": [
-    "# Filtra destinos válidos, agrupa e calcula a média\n",
     "q2 = df_viagem[df_viagem['destinos'].notnull()].groupby('destinos')['valor_total'].agg(['mean', 'count']).reset_index()\n",
     "q2 = q2.sort_values(by='mean', ascending=False).head(3)\n",
     "\n",
-    "print(\"=== TOP 3 DESTINOS COM MAIOR CUSTO MÉDIO ===\")\n",
+    "print(\"=== P2: OS 3 DESTINOS COM MAIOR CUSTO MÉDIO ===\")\n",
     "for idx, row in enumerate(q2.itertuples(), 1):\n",
-    "    print(f\"{idx}. Destino: {row.destinos:<50} | Custo Médio: R$ {row.mean:,.2f} ({row.count} viagens)\")"
+    "    print(f\"{idx}. Destino: {row.destinos:<50} | Média: R$ {row.mean:,.2f} ({row.count} viagens)\")"
    ]
   },
   {
@@ -133,18 +181,20 @@ notebook = {
    "metadata": {},
    "outputs": [],
    "source": [
-    "# Filtra durações válidas e localiza a viagem mais longa\n",
     "df_duracao_valida = df_viagem[df_viagem['duracao_dias'].notnull()]\n",
-    "q3 = df_duracao_valida.sort_values(by='duracao_dias', ascending=False).iloc[0]\n",
     "\n",
-    "print(\"=== VIAGEM DE MAIOR DURAÇÃO REGISTRADA ===\")\n",
-    "print(f\"• ID da Viagem:  {q3['id_viagem']}\")\n",
-    "print(f\"• Viajante:      {q3['nome_viajante']}\")\n",
-    "print(f\"• Órgão:         {q3['nome_orgao_superior']}\")\n",
-    "print(f\"• Destino:       {q3['destinos']}\")\n",
-    "print(f\"• Período:       {q3['data_inicio']} até {q3['data_fim']}\")\n",
-    "print(f\"• Duração total: {q3['duracao_dias']} dias\")\n",
-    "print(f\"• Custo total:   R$ {q3['valor_total']:,.2f}\")"
+    "print(\"=== P3: VIAGEM DE MAIOR DURAÇÃO E SEU CUSTO TOTAL ===\")\n",
+    "if not df_duracao_valida.empty:\n",
+    "    q3 = df_duracao_valida.sort_values(by='duracao_dias', ascending=False).iloc[0]\n",
+    "    print(f\"• ID da Viagem:  {q3['id_viagem']}\")\n",
+    "    print(f\"• Viajante:      {q3['nome_viajante']}\")\n",
+    "    print(f\"• Órgão:         {q3['nome_orgao_superior']}\")\n",
+    "    print(f\"• Destino:       {q3['destinos']}\")\n",
+    "    print(f\"• Período:       {q3['data_inicio']} até {q3['data_fim']}\")\n",
+    "    print(f\"• Duração:       {int(q3['duracao_dias'])} dias\")\n",
+    "    print(f\"• Custo Total:   R$ {q3['valor_total']:,.2f}\")\n",
+    "else:\n",
+    "    print(\"[!] Nenhum registro de viagem com duração válida disponível.\")"
    ]
   },
   {
@@ -160,13 +210,15 @@ notebook = {
    "metadata": {},
    "outputs": [],
    "source": [
-    "# Agrupamento e média por tipo de pagamento\n",
     "q4 = df_pagamento.groupby('tipo_pagamento')['valor'].mean().reset_index()\n",
-    "q4 = q4.sort_values(by='valor', ascending=False).head(1).iloc[0]\n",
     "\n",
-    "print(\"=== TIPO DE PAGAMENTO COM MAIOR VALOR MÉDIO ===\")\n",
-    "print(f\"• Tipo de Pagamento: {q4['tipo_pagamento']}\")\n",
-    "print(f\"• Valor Médio:       R$ {q4['valor']:,.2f}\")"
+    "print(\"=== P4: TIPO DE PAGAMENTO COM MAIOR VALOR MÉDIO ===\")\n",
+    "if not q4.empty:\n",
+    "    top_q4 = q4.sort_values(by='valor', ascending=False).iloc[0]\n",
+    "    print(f\"• Tipo de Pagamento: {top_q4['tipo_pagamento']}\")\n",
+    "    print(f\"• Valor Médio:       R$ {top_q4['valor']:,.2f}\")\n",
+    "else:\n",
+    "    print(\"[!] Tabela de pagamentos vazia ou sem dados válidos.\")"
    ]
   },
   {
@@ -182,16 +234,14 @@ notebook = {
    "metadata": {},
    "outputs": [],
    "source": [
-    "# Filtra dados válidos de trecho e calcula a contagem de ocorrências\n",
     "df_transporte_valido = df_trecho[~df_trecho['meio_transporte'].isin([None, 'Sem informação', ''])]\n",
     "q5 = df_transporte_valido['meio_transporte'].value_counts().reset_index()\n",
     "q5.columns = ['meio_transporte', 'quantidade']\n",
     "\n",
-    "print(\"=== MEIOS DE TRANSPORTE UTILIZADOS NOS TRECHOS ===\")\n",
+    "print(\"=== P5: MEIO DE TRANSPORTE MAIS USADO NOS TRECHOS ===\")\n",
     "for idx, row in enumerate(q5.itertuples(), 1):\n",
     "    print(f\"{idx}. {row.meio_transporte:<20} | {row.quantidade:,} trechos\")\n",
     "\n",
-    "# Plotagem do gráfico de pizza/donut\n",
     "plt.figure(figsize=(6, 6))\n",
     "plt.pie(\n",
     "    q5['quantidade'], \n",
@@ -222,15 +272,17 @@ notebook = {
    "metadata": {},
    "outputs": [],
    "source": [
-    "# Filtra UFs válidas e realiza a contagem\n",
     "df_uf_valida = df_trecho[~df_trecho['destino_uf'].isin([None, 'Sem informação', ''])]\n",
-    "q6 = df_uf_valida['destino_uf'].value_counts().reset_index()\n",
-    "q6.columns = ['uf_destino', 'total_trechos']\n",
-    "top_uf = q6.iloc[0]\n",
     "\n",
-    "print(\"=== UF DE DESTINO MAIS FREQUENTE NOS TRECHOS ===\")\n",
-    "print(f\"• UF de Destino: {top_uf['uf_destino']}\")\n",
-    "print(f\"• Total de Trechos Ocorridos: {top_uf['total_trechos']:,} ocorrências\")"
+    "print(\"=== P6: UF DE DESTINO MAIS FREQUENTE NOS TRECHOS ===\")\n",
+    "if not df_uf_valida.empty:\n",
+    "    q6 = df_uf_valida['destino_uf'].value_counts().reset_index()\n",
+    "    q6.columns = ['uf_destino', 'total_trechos']\n",
+    "    top_uf = q6.iloc[0]\n",
+    "    print(f\"• UF de Destino: {top_uf['uf_destino']}\")\n",
+    "    print(f\"• Ocorrências:   {top_uf['total_trechos']:,} trechos\")\n",
+    "else:\n",
+    "    print(\"[!] Nenhum trecho com UF de destino válida cadastrado.\")"
    ]
   },
   {
@@ -246,14 +298,16 @@ notebook = {
    "metadata": {},
    "outputs": [],
    "source": [
-    "# Agrupamento dos gastos da tabela de pagamentos por órgão pagador\n",
     "df_pagador_valido = df_pagamento[~df_pagamento['nome_orgao_pagador'].isin([None, 'Sem informação', ''])]\n",
     "q7 = df_pagador_valido.groupby('nome_orgao_pagador')['valor'].sum().reset_index()\n",
-    "q7 = q7.sort_values(by='valor', ascending=False).iloc[0]\n",
     "\n",
-    "print(\"=== ÓRGÃO COM MAIOR GASTO TOTAL EM PAGAMENTOS ===\")\n",
-    "print(f\"• Órgão Pagador:   {q7['nome_orgao_pagador']}\")\n",
-    "print(f\"• Total Executado: R$ {q7['valor']:,.2f}\")"
+    "print(\"=== P7: ÓRGÃO COM MAIOR GASTO EM PAGAMENTOS CONSOLIDADOS ===\")\n",
+    "if not q7.empty:\n",
+    "    top_q7 = q7.sort_values(by='valor', ascending=False).iloc[0]\n",
+    "    print(f\"• Órgão Pagador:   {top_q7['nome_orgao_pagador']}\")\n",
+    "    print(f\"• Total Pago:      R$ {top_q7['valor']:,.2f}\")\n",
+    "else:\n",
+    "    print(\"[!] Sem dados ou apenas 'Sem informação' listado na tabela de pagamentos.\")"
    ]
   },
   {
@@ -261,9 +315,8 @@ notebook = {
    "metadata": {},
    "source": [
     "---\n",
-    "### 🏛️ 3. Camada Gold Agregada (Persistência de Dados)\n",
-    "\n",
-    "Nesta etapa final, consolidamos uma tabela agregada na Camada Gold do PostgreSQL (`gold_resumo_orgaos`). Essa tabela servirá como fonte de dados limpa e otimizada para futuras ferramentas de visualização executiva (como Power BI)."
+    "### 🎨 3. Dashboard Executivo Interativo (Tema Escuro - Estilo Power BI)\n",
+    "Utilize o seletor dropdown para filtrar dinamicamente todos os dados e gráficos interativos no próprio corpo do notebook."
    ]
   },
   {
@@ -272,9 +325,125 @@ notebook = {
    "metadata": {},
    "outputs": [],
    "source": [
-    "print(\"[*] Criando a tabela agregada da camada Gold...\")\n",
+    "TEMA_DARK = \"plotly_dark\"\n",
+    "COR_PRINCIPAL = \"#2ecc71\"  # Verde Neon clássico do Power BI\n",
     "\n",
-    "# 1. Processamento da Agregação no Pandas\n",
+    "def renderizar_dashboard_interativo(orgao_selecionado=\"Todos\"):\n",
+    "    df_filtrado = df_viagem.copy()\n",
+    "    if orgao_selecionado != \"Todos\":\n",
+    "        df_filtrado = df_filtrado[df_filtrado['nome_orgao_superior'] == orgao_selecionado]\n",
+    "        \n",
+    "    custo_total = df_filtrado['valor_total'].sum()\n",
+    "    qtd_viagens = len(df_filtrado)\n",
+    "    duracao_media = df_filtrado['duracao_dias'].mean() if len(df_filtrado) > 0 else 0\n",
+    "    \n",
+    "    if orgao_selecionado == \"Todos\":\n",
+    "        total_pago = df_pagamento['valor'].sum()\n",
+    "    else:\n",
+    "        ids_viagem_filtradas = set(df_filtrado['id_viagem'])\n",
+    "        total_pago = df_pagamento[df_pagamento['id_viagem'].isin(ids_viagem_filtradas)]['valor'].sum()\n",
+    "\n",
+    "    html_kpis = f\"\"\"\n",
+    "    <div style=\"background-color: #111; padding: 20px; border-radius: 10px; margin-bottom: 20px; font-family: sans-serif;\">\n",
+    "        <h2 style=\"color: white; margin-top: 0; text-align: center; border-bottom: 2px solid {COR_PRINCIPAL}; padding-bottom: 10px;\">\n",
+    "            ✈️ Portal da Transparência: Painel Analítico de Viagens\n",
+    "        </h2>\n",
+    "        <div style=\"display: flex; justify-content: space-around; text-align: center; margin-top: 15px;\">\n",
+    "            <div style=\"flex: 1;\">\n",
+    "                <span style=\"color: #888; font-size: 13px; text-transform: uppercase;\">Custo Total</span><br>\n",
+    "                <strong style=\"color: white; font-size: 22px;\">R$ {custo_total:,.2f}</strong>\n            </div>\n",
+    "            <div style=\"flex: 1; border-left: 1px solid #333;\">\n",
+    "                <span style=\"color: #888; font-size: 13px; text-transform: uppercase;\">Qtd. de Viagens</span><br>\n",
+    "                <strong style=\"color: white; font-size: 22px;\">{qtd_viagens:,}</strong>\n            </div>\n",
+    "            <div style=\"flex: 1; border-left: 1px solid #333;\">\n",
+    "                <span style=\"color: #888; font-size: 13px; text-transform: uppercase;\">Total Pago</span><br>\n                <strong style=\"color: white; font-size: 22px;\">R$ {total_pago:,.2f}</strong>\n            </div>\n",
+    "            <div style=\"flex: 1; border-left: 1px solid #333;\">\n",
+    "                <span style=\"color: #888; font-size: 13px; text-transform: uppercase;\">Duração Média</span><br>\n                <strong style=\"color: {COR_PRINCIPAL}; font-size: 22px;\">{duracao_media:.1f} dias</strong>\n            </div>\n",
+    "        </div>\n",
+    "    </div>\n",
+    "    \"\"\"\n",
+    "    display(widgets.HTML(html_kpis))\n",
+    "\n",
+    "    fig = make_subplots(\n",
+    "        rows=1, cols=2, \n",
+    "        column_widths=[0.45, 0.55],\n",
+    "        subplot_titles=(\"Ranking: Órgãos por Custo\", \"Custo Total por Mês\")\n",
+    "    )\n",
+    "\n",
+    "    g1_data = df_filtrado.groupby('nome_orgao_superior')['valor_total'].sum().reset_index()\n",
+    "    g1_data = g1_data.sort_values(by='valor_total', ascending=False).head(5)\n",
+    "    \n",
+    "    fig.add_trace(\n",
+    "        go.Bar(\n",
+    "            x=g1_data['valor_total'],\n",
+    "            y=g1_data['nome_orgao_superior'],\n",
+    "            orientation='h',\n",
+    "            marker_color=COR_PRINCIPAL,\n",
+    "            text=[f\"R$ {val/1e6:.1f}M\" for val in g1_data['valor_total']],\n",
+    "            textposition='auto',\n",
+    "            name=\"Custo Total\"\n",
+    "        ),\n",
+    "        row=1, col=1\n",
+    "    )\n",
+    "\n",
+    "    df_filtrado['mes_ano'] = pd.to_datetime(df_filtrado['data_inicio'], errors='coerce').dt.to_period('M').astype(str)\n",
+    "    g2_data = df_filtrado[df_filtrado['mes_ano'] != 'NaT'].groupby('mes_ano')['valor_total'].sum().reset_index()\n",
+    "    g2_data = g2_data.sort_values(by='mes_ano')\n",
+    "\n",
+    "    fig.add_trace(\n",
+    "        go.Scatter(\n",
+    "            x=g2_data['mes_ano'],\n",
+    "            y=g2_data['valor_total'],\n",
+    "            mode='lines+markers',\n",
+    "            line=dict(color=COR_PRINCIPAL, width=3),\n",
+    "            marker=dict(size=8),\n",
+    "            name=\"Evolução Mensal\"\n",
+    "        ),\n",
+    "        row=1, col=2\n",
+    "    )\n",
+    "\n",
+    "    fig.update_layout(\n",
+    "        template=TEMA_DARK,\n",
+    "        height=450,\n",
+    "        showlegend=False,\n",
+    "        paper_bgcolor=\"#111\",\n",
+    "        plot_bgcolor=\"#111\",\n",
+    "        margin=dict(l=20, r=20, t=40, b=20)\n",
+    "    )\n",
+    "    \n",
+    "    fig.update_yaxes(autorange=\"reversed\", row=1, col=1)\n",
+    "    fig.show()\n",
+    "\n",
+    "lista_orgaos = [\"Todos\"] + sorted(df_viagem['nome_orgao_superior'].dropna().unique().tolist())\n",
+    "\n",
+    "interact(\n",
+    "    renderizar_dashboard_interativo, \n",
+    "    orgao_selecionado=widgets.Dropdown(\n",
+    "        options=lista_orgaos, \n",
+    "        value=\"Todos\", \n",
+    "        description=\"Filtro Órgão:\",\n",
+    "        style={'description_width': 'initial'},\n",
+    "        layout={'width': '400px'}\n",
+    "    )\n",
+    ");"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "---\n",
+    "### 🏛️ 4. Camada Gold Agregada (Persistência no PostgreSQL)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": None,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(\"[*] Processando agregação para a camada Gold agregada...\")\n",
+    "\n",
     "df_gold_agregada = df_viagem.groupby('nome_orgao_superior').agg(\n",
     "    total_viagens=('id_viagem', 'count'),\n",
     "    custo_total=('valor_total', 'sum'),\n",
@@ -282,17 +451,14 @@ notebook = {
     "    duracao_media_dias=('duracao_dias', 'mean')\n",
     ").reset_index()\n",
     "\n",
-    "# Arredonda as colunas decimais para manter o padrão monetário/numérico limpo\n",
     "df_gold_agregada['custo_medio'] = df_gold_agregada['custo_medio'].round(2)\n",
     "df_gold_agregada['duracao_media_dias'] = df_gold_agregada['duracao_media_dias'].round(1)\n",
     "\n",
-    "# Substitui possíveis valores nulos remanescentes de cálculos matemáticos por valores seguros\n",
+    "# Tratamento estrito de valores nulos matemáticos antes de persistir no Postgres\n",
     "df_gold_agregada = df_gold_agregada.where(pd.notnull(df_gold_agregada), None)\n",
     "\n",
-    "# 2. Gravação Física da Tabela no Banco de Dados (PostgreSQL)\n",
     "conexao = conectar()\n",
     "\n",
-    "# SQL para recriação limpa da tabela\n",
     "sql_ddl = \"\"\"\n",
     "DROP TABLE IF EXISTS gold_resumo_orgaos CASCADE;\n",
     "CREATE TABLE gold_resumo_orgaos (\n",
@@ -305,17 +471,55 @@ notebook = {
     "\"\"\"\n",
     "executar(conexao, sql_ddl)\n",
     "\n",
-    "# Gravação das linhas agregadas via INSERT em lote\n",
     "colunas = ['nome_orgao_superior', 'total_viagens', 'custo_total', 'custo_medio', 'duracao_media_dias']\n",
     "placeholders = \", \".join([\"%s\"] * len(colunas))\n",
     "sql_insert = f\"INSERT INTO gold_resumo_orgaos ({', '.join(colunas)}) VALUES ({placeholders})\"\n",
     "\n",
     "registros = [tuple(x) for x in df_gold_agregada.itertuples(index=False, name=None)]\n",
     "inserir_em_lote(conexao, sql_insert, registros)\n",
+    "\n",
+    "# SALVAMENTO FÍSICO COM COMMIT\n",
+    "conexao.commit()\n",
     "conexao.close()\n",
     "\n",
-    "print(f\"[SUCCESS] Tabela agregada 'gold_resumo_orgaos' gravada com sucesso!\")\n",
-    "print(f\"  • Total de {len(df_gold_agregada)} registros de órgãos persistidos na camada Gold.\")"
+    "print(f\"[SUCCESS] Tabela 'gold_resumo_orgaos' gravada com sucesso!\")\n",
+    "print(f\"  • {len(df_gold_agregada)} órgãos persistidos na camada Gold.\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "---\n",
+    "### 🔎 5. Validação e Consulta Direta da Camada Gold"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": None,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(\"[*] Conectando ao banco de dados para validar a tabela 'gold_resumo_orgaos'...\")\n",
+    "\n",
+    "conexao = conectar()\n",
+    "query_validacao = \"\"\"\n",
+    "    SELECT \n",
+    "        nome_orgao_superior, \n",
+    "        total_viagens, \n",
+    "        custo_total, \n",
+    "        custo_medio, \n",
+    "        duracao_media_dias\n",
+    "    FROM gold_resumo_orgaos\n",
+    "    ORDER BY custo_total DESC\n",
+    "    LIMIT 10;\n",
+    "\"\"\"\n",
+    "df_gold_verificacao = pd.read_sql_query(query_validacao, conexao)\n",
+    "conexao.close()\n",
+    "\n",
+    "print(f\"[+] Consulta de auditoria concluída com sucesso!\")\n",
+    "print(f\"  • Exibindo os 10 órgãos de maior relevância orçamentária persistidos na base:\")\n",
+    "display(df_gold_verificacao)"
    ]
   }
  ],
@@ -328,9 +532,18 @@ notebook = {
  "nbformat_minor": 2
 }
 
-# Escreve o JSON estruturado no arquivo .ipynb
-with open("3_analise.ipynb", "w", encoding="utf-8") as f:
-    json.dump(notebook, f, indent=1, ensure_ascii=False)
+# Salva localmente na pasta raiz de execução
+with open(filename, "w", encoding="utf-8") as f:
+    json.dump(notebook_data, f, indent=1, ensure_ascii=False)
 
-print("\n[SUCCESS] O arquivo '3_analise.ipynb' foi gerado com sucesso na pasta do seu projeto!")
-print("[*] Agora você pode abri-lo diretamente no VS Code e executá-lo.")
+# Tenta salvar diretamente na pasta Downloads/Projeto_final_SCTEC
+try:
+    if not os.path.exists(target_dir):
+        os.makedirs(target_dir)
+    target_path = os.path.join(target_dir, filename)
+    with open(target_path, "w", encoding="utf-8") as f:
+        json.dump(notebook_data, f, indent=1, ensure_ascii=False)
+    print(f"\n[SUCCESS] O arquivo '{filename}' foi gravado em: {target_path}")
+except Exception as e:
+    print(f"\n[Aviso] Erro ao gravar no diretório absoluto: {e}")
+    print(f"O arquivo foi salvo na pasta local onde o terminal foi executado.")
