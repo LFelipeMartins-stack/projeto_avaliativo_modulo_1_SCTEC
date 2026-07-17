@@ -68,8 +68,8 @@ MAPEAMENTO_COLUNAS = {
     "raw_pagamento": {
         "id_viagem": "Identificador do processo de viagem",
         "num_proposta": "Número da Proposta (PCDP)",
-        "nome_orgao_pagador": "Nome do órgão pagador",
-        "nome_ug_pagadora": "Nome da UG pagadora",
+        "nome_orgao_pagador": "Nome do órgao pagador",
+        "nome_ug_pagadora": "Nome da unidade gestora pagadora",
         "tipo_pagamento": "Tipo de pagamento",
         "valor": "Valor"
     },
