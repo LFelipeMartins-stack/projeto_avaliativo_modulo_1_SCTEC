@@ -1,0 +1,328 @@
+"""
+2_transformar.py
+----------------
+Pipeline de Transformação (ETL) utilizando Pandas para processamento em memória
+e PostgreSQL para carga final da camada Silver.
+"""
+
+import pandas as pd
+import numpy as np
+import re  
+from banco import conectar, executar, inserir_em_lote
+
+# Mapeamento de siglas para nomes de estados por extenso
+MAPA_UFS = {
+    'AC': 'Acre', 'AL': 'Alagoas', 'AP': 'Amapá', 'AM': 'Amazonas',
+    'BA': 'Bahia', 'CE': 'Ceará', 'DF': 'Distrito Federal', 'ES': 'Espírito Santo',
+    'GO': 'Goiás', 'MA': 'Maranhão', 'MT': 'Mato Grosso', 'MS': 'Mato Grosso do Sul',
+    'MG': 'Minas Gerais', 'PA': 'Pará', 'PB': 'Paraíba', 'PR': 'Paraná',
+    'PE': 'Pernambuco', 'PI': 'Piauí', 'RJ': 'Rio de Janeiro', 'RN': 'Rio Grande do Norte',
+    'RS': 'Rio Grande do Sul', 'RO': 'Rondônia', 'RR': 'Roraima', 'SC': 'Santa Catarina',
+    'SP': 'São Paulo', 'SE': 'Sergipe', 'TO': 'Tocantins'
+}
+
+# ---------------------------------------------------------------------------
+# Funções Auxiliares de Tratamento de Dados (Transform)
+# ---------------------------------------------------------------------------
+
+def obter_destino_consolidado(destino_str) -> str:
+    if not destino_str or pd.isna(destino_str):
+        return "Não Informado"
+    
+    # INTERCEPTAÇÃO: Padroniza informações protegidas por sigilo
+    if re.search(r'(sigilo|protegida|secreto)', str(destino_str), re.IGNORECASE):
+        return "Sigiloso"
+    
+    # Encontra todas as siglas de UF (ex: /AC, /SP, /RJ) contidas no itinerário
+    ufs_encontradas = re.findall(r'/([A-Z]{2})\b', str(destino_str))
+    
+    # Filtra 'DF' (Brasília), pois quase sempre representa apenas o ponto de partida/retorno
+    ufs_validas = [uf for uf in ufs_encontradas if uf != 'DF']
+    
+    if ufs_validas:
+        # Retorna o nome por extenso do primeiro estado de destino real
+        return MAPA_UFS.get(ufs_validas[0], ufs_validas[0])
+    elif ufs_encontradas:
+        # Se a viagem ocorreu exclusivamente dentro do DF ou se o DF foi a única UF detectada
+        return MAPA_UFS.get(ufs_encontradas[0], ufs_encontradas[0])
+    
+    # Tratamento para viagens Internacionais (ex: "Abu Dabi/Emirados Árabes" -> "Emirados Árabes")
+    partes = str(destino_str).split(',')
+    for parte in partes:
+        if '/' in parte:
+            cidade_pais = parte.split('/')
+            if len(cidade_pais) > 1:
+                pais_limpo = cidade_pais[1].strip()
+                if pais_limpo not in MAPA_UFS:
+                    return pais_limpo # Retorna o País de destino
+                
+    return str(destino_str).split(',')[0].strip()
+
+
+def limpar_texto_regex(texto) -> str:
+    """
+    Remove espaços extras (no início, fim e entre as palavras), tabulações e quebras
+    de linha via Regex, padronizando o texto em letras maiúsculas (Uppercase).
+    """
+    if pd.isna(texto) or str(texto).lower() in ("nan", "null", "none", "", "sem informação"):
+        return None
+    
+    texto_limpo = str(texto).upper().strip()
+    # REGEX: Substitui múltiplos espaços em branco, \n ou \t por apenas um espaço ' '
+    texto_limpo = re.sub(r'\s+', ' ', texto_limpo)
+    return texto_limpo
+
+
+def limpar_decimal(serie: pd.Series) -> pd.Series:
+    """
+    Converte strings numéricas brasileiras para floats válidos.
+    Injeta inteligência contra strings fantasmas e erros de fórmulas do Excel (#N/D, #VALOR!).
+    """
+    if serie is None or serie.empty:
+        return pd.Series(0.00, index=serie.index)
+    
+    s = serie.astype(str).str.strip().str.lower()
+    s = s.str.replace(r'\.', '', regex=True)  # Remove ponto de milhar
+    s = s.str.replace(',', '.', regex=False)  # Substitui vírgula decimal por ponto
+    
+    # Mapeamento estendido de nulos e erros literais de funções do Excel
+    fantasmas_excel = ['sem informação', 'nan', 'null', 'none', '', '#n/d', '#valor!', '#ref!']
+    s = s.replace(fantasmas_excel, '0.00')
+    
+    num = pd.to_numeric(s, errors="coerce").fillna(0.00)
+    return num.clip(lower=0.00)
+
+
+def limpar_data(serie: pd.Series) -> pd.Series:
+    """Converte strings DD/MM/AAAA em strings padrão ISO YYYY-MM-DD ou None."""
+    datas_dt = pd.to_datetime(serie, format="%d/%m/%Y", errors="coerce")
+    return datas_dt.dt.strftime('%Y-%m-%d').where(datas_dt.notnull(), None)
+
+
+def tratar_nulos_para_db(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Garante que NaNs, NaTs e floats inválidos do Pandas sejam convertidos 
+    para o objeto None (que vira NULL nativamente no PostgreSQL).
+    """
+    return df.astype(object).where(pd.notnull(df), None)
+
+# ---------------------------------------------------------------------------
+# Etapas do Pipeline (ETL)
+# ---------------------------------------------------------------------------
+
+def executar_etl_silver():
+    conexao = conectar()
+    
+    try:
+        print("\n" + "="*80)
+        print("[INFO] INICIANDO SPRINT 2 & 3: TRANSFORMAÇÃO, LIMPEZA E DATA QUALITY")
+        print("="*80)
+
+        # EXTRACT: Extração dos dados das tabelas RAW para o Pandas
+        print("[*] Extraindo dados da camada RAW...")
+        df_raw_viagem = pd.read_sql_query("SELECT * FROM raw_viagem", conexao)
+        df_raw_pagamento = pd.read_sql_query("SELECT * FROM raw_pagamento", conexao)
+        df_raw_passagem = pd.read_sql_query("SELECT * FROM raw_passagem", conexao)
+        df_raw_trecho = pd.read_sql_query("SELECT * FROM raw_trecho", conexao)
+        
+        # ---------------------------------------------------------------------------
+        # TRANSFORM: Processamento da Tabela silver_viagem
+        # ---------------------------------------------------------------------------
+        print("\n[*] Transformando silver_viagem...")
+        df_silver_viagem = pd.DataFrame()
+        
+        # Chave Primária e Remoção de Duplicatas
+        df_silver_viagem['id_viagem'] = df_raw_viagem['id_viagem'].astype(str).str.strip()
+        
+        total_viagens_antes = len(df_silver_viagem)
+        df_silver_viagem.drop_duplicates(subset=['id_viagem'], keep='first', inplace=True)
+        viagens_duplicadas = total_viagens_antes - len(df_silver_viagem)
+        print(f" -> [DATA QA] {viagens_duplicadas} viagens duplicadas removidas na PK.")
+        
+        # Campos simples higienizados com Regex e Uppercase
+        df_silver_viagem['num_proposta'] = df_raw_viagem['num_proposta'].apply(limpar_texto_regex)
+        df_silver_viagem['situacao'] = df_raw_viagem['situacao'].apply(limpar_texto_regex)
+        df_silver_viagem['viagem_urgente'] = df_raw_viagem['viagem_urgente'].apply(limpar_texto_regex)
+        df_silver_viagem['cod_orgao_superior'] = df_raw_viagem['cod_orgao_superior'].astype(str).str.strip()
+        
+        # Constraint NOT NULL resolvida de forma limpa
+        df_silver_viagem['nome_orgao_superior'] = df_raw_viagem['nome_orgao_superior'].apply(limpar_texto_regex).fillna("NÃO INFORMADO")
+        df_silver_viagem['nome_viajante'] = df_raw_viagem['nome_viajante'].apply(limpar_texto_regex)
+        df_silver_viagem['cargo'] = df_raw_viagem['cargo'].apply(limpar_texto_regex)
+        
+        # Tratamento de Datas
+        df_silver_viagem['data_inicio'] = limpar_data(df_raw_viagem['data_inicio'])
+        df_silver_viagem['data_fim'] = limpar_data(df_raw_viagem['data_fim'])
+        
+        # Textos longos, Motivo e Enriquecimento de Destino (Estado por extenso)
+        df_silver_viagem['destinos'] = df_raw_viagem['destinos']
+        df_silver_viagem['destino_estado'] = df_raw_viagem['destinos'].apply(obter_destino_consolidado)
+        df_silver_viagem['motivo'] = df_raw_viagem['motivo'].apply(limpar_texto_regex)
+        
+        # Tratamento de Decimais com validação do CHECK >= 0
+        df_silver_viagem['valor_diarias'] = limpar_decimal(df_raw_viagem['valor_diarias'])
+        df_silver_viagem['valor_passagens'] = limpar_decimal(df_raw_viagem['valor_passagens'])
+        df_silver_viagem['valor_devolucao'] = limpar_decimal(df_raw_viagem['valor_devolucao'])
+        df_silver_viagem['valor_outros_gastos'] = limpar_decimal(df_raw_viagem['valor_outros_gastos'])
+        
+        # COLUNAS CALCULADAS
+        df_silver_viagem['valor_total'] = (
+            df_silver_viagem['valor_diarias'] + 
+            df_silver_viagem['valor_passagens'] + 
+            df_silver_viagem['valor_outros_gastos'] - 
+            df_silver_viagem['valor_devolucao']
+        )
+        
+        # duracao_dias = data_fim - data_inicio
+        data_ini_dt = pd.to_datetime(df_silver_viagem['data_inicio'], errors='coerce')
+        data_fim_dt = pd.to_datetime(df_silver_viagem['data_fim'], errors='coerce')
+        df_silver_viagem['duracao_dias'] = (data_fim_dt - data_ini_dt).dt.days
+        
+        df_silver_viagem = tratar_nulos_para_db(df_silver_viagem)
+        
+        # Set de IDs válidos para assegurar a Integridade Referencial (FK) das tabelas filhas
+        viagens_validas = set(df_silver_viagem['id_viagem'].tolist())
+
+        # ---------------------------------------------------------------------------
+        # TRANSFORM: Processamento da Tabela silver_pagamento
+        # ---------------------------------------------------------------------------
+        print("\n[*] Transformando silver_pagamento...")
+        df_silver_pagamento = pd.DataFrame()
+        df_silver_pagamento['id_viagem'] = df_raw_pagamento['id_viagem'].astype(str).str.strip()
+        
+        # Data Quality: Filtro de Integridade Referencial (FK)
+        total_pagamentos_raw = len(df_silver_pagamento)
+        df_silver_pagamento = df_silver_pagamento[df_silver_pagamento['id_viagem'].isin(viagens_validas)].copy()
+        pagamentos_orfaos = total_pagamentos_raw - len(df_silver_pagamento)
+        print(f" -> [DATA QA] {pagamentos_orfaos} registros órfãos removidos em pagamentos por violação de FK.")
+        
+        indices_filtrados = df_silver_pagamento.index
+        df_silver_pagamento['num_proposta'] = df_raw_pagamento.loc[indices_filtrados, 'num_proposta'].apply(limpar_texto_regex)
+        df_silver_pagamento['nome_orgao_pagador'] = df_raw_pagamento.loc[indices_filtrados, 'nome_orgao_pagador'].apply(limpar_texto_regex)
+        df_silver_pagamento['nome_ug_pagadora'] = df_raw_pagamento.loc[indices_filtrados, 'nome_ug_pagadora'].apply(limpar_texto_regex)
+        df_silver_pagamento['tipo_pagamento'] = df_raw_pagamento.loc[indices_filtrados, 'tipo_pagamento'].apply(limpar_texto_regex).fillna("NÃO INFORMADO")
+        df_silver_pagamento['valor'] = limpar_decimal(df_raw_pagamento.loc[indices_filtrados, 'valor'])
+        
+        df_silver_pagamento = tratar_nulos_para_db(df_silver_pagamento)
+
+        # ---------------------------------------------------------------------------
+        # TRANSFORM: Processamento da Tabela silver_passagem
+        # ---------------------------------------------------------------------------
+        print("\n[*] Transformando silver_passagem...")
+        df_silver_passagem = pd.DataFrame()
+        df_silver_passagem['id_viagem'] = df_raw_passagem['id_viagem'].astype(str).str.strip()
+        
+        # Data Quality: Filtro de Integridade Referencial (FK)
+        total_passagens_raw = len(df_silver_passagem)
+        df_silver_passagem = df_silver_passagem[df_silver_passagem['id_viagem'].isin(viagens_validas)].copy()
+        passagens_orfaas = total_passagens_raw - len(df_silver_passagem)
+        print(f" -> [DATA QA] {passagens_orfaas} registros órfãos removidos em passagens por violação de FK.")
+        
+        indices_filtrados = df_silver_passagem.index
+        df_silver_passagem['meio_transporte'] = df_raw_passagem.loc[indices_filtrados, 'meio_transporte'].apply(limpar_texto_regex)
+        df_silver_passagem['pais_origem_ida'] = df_raw_passagem.loc[indices_filtrados, 'pais_origem_ida'].apply(limpar_texto_regex)
+        df_silver_passagem['uf_origem_ida'] = df_raw_passagem.loc[indices_filtrados, 'uf_origem_ida'].apply(limpar_texto_regex)
+        df_silver_passagem['cidade_origem_ida'] = df_raw_passagem.loc[indices_filtrados, 'cidade_origem_ida'].apply(limpar_texto_regex)
+        df_silver_passagem['pais_destino_ida'] = df_raw_passagem.loc[indices_filtrados, 'pais_destino_ida'].apply(limpar_texto_regex)
+        df_silver_passagem['uf_destino_ida'] = df_raw_passagem.loc[indices_filtrados, 'uf_destino_ida'].apply(limpar_texto_regex)
+        df_silver_passagem['cidade_destino_ida'] = df_raw_passagem.loc[indices_filtrados, 'cidade_destino_ida'].apply(limpar_texto_regex)
+        df_silver_passagem['valor_passagem'] = limpar_decimal(df_raw_passagem.loc[indices_filtrados, 'valor_passagem'])
+        df_silver_passagem['taxa_servico'] = limpar_decimal(df_raw_passagem.loc[indices_filtrados, 'taxa_servico'])
+        df_silver_passagem['data_emissao'] = limpar_data(df_raw_passagem.loc[indices_filtrados, 'data_emissao'])
+        
+        df_silver_passagem = tratar_nulos_para_db(df_silver_passagem)
+
+        # ---------------------------------------------------------------------------
+        # TRANSFORM: Processamento da Tabela silver_trecho
+        # ---------------------------------------------------------------------------
+        print("\n[*] Transformando silver_trecho...")
+        df_silver_trecho = pd.DataFrame()
+        df_silver_trecho['id_viagem'] = df_raw_trecho['id_viagem'].astype(str).str.strip()
+        
+        # Data Quality: Filtro de Integridade Referencial (FK)
+        total_trechos_raw = len(df_silver_trecho)
+        df_silver_trecho = df_silver_trecho[df_silver_trecho['id_viagem'].isin(viagens_validas)].copy()
+        trechos_orfaos = total_trechos_raw - len(df_silver_trecho)
+        print(f" -> [DATA QA] {trechos_orfaos} registros órfãos removidos em trechos por violação de FK.")
+        
+        indices_filtrados = df_silver_trecho.index
+        seq_limpa = pd.to_numeric(df_raw_trecho.loc[indices_filtrados, 'sequencia_trecho'], errors='coerce').fillna(1).astype(int)
+        df_silver_trecho['sequencia_trecho'] = seq_limpa
+        
+        # Data Quality: Remoção de duplicatas da Chave Composta / Restrição UNIQUE
+        total_trechos_antes_dedup = len(df_silver_trecho)
+        df_silver_trecho.drop_duplicates(subset=['id_viagem', 'sequencia_trecho'], keep='first', inplace=True)
+        trechos_duplicados = total_trechos_antes_dedup - len(df_silver_trecho)
+        print(f" -> [DATA QA] {trechos_duplicados} trechos duplicados removidos na restrição de chave composta UNIQUE.")
+        
+        indices_finais = df_silver_trecho.index
+        df_silver_trecho['origem_data'] = limpar_data(df_raw_trecho.loc[indices_finais, 'origem_data'])
+        df_silver_trecho['origem_uf'] = df_raw_trecho.loc[indices_finais, 'origem_uf'].apply(limpar_texto_regex)
+        df_silver_trecho['origem_cidade'] = df_raw_trecho.loc[indices_finais, 'origem_cidade'].apply(limpar_texto_regex)
+        df_silver_trecho['destino_data'] = limpar_data(df_raw_trecho.loc[indices_finais, 'destino_data'])
+        df_silver_trecho['destino_uf'] = df_raw_trecho.loc[indices_finais, 'destino_uf'].apply(limpar_texto_regex)
+        df_silver_trecho['destino_cidade'] = df_raw_trecho.loc[indices_finais, 'destino_cidade'].apply(limpar_texto_regex)
+        df_silver_trecho['meio_transporte'] = df_raw_trecho.loc[indices_finais, 'meio_transporte'].apply(limpar_texto_regex)
+        df_silver_trecho['numero_diarias'] = limpar_decimal(df_raw_trecho.loc[indices_finais, 'numero_diarias'])
+        
+        df_silver_trecho = tratar_nulos_para_db(df_silver_trecho)
+
+        # ---------------------------------------------------------------------------
+        # LOAD: Carga idempotente na Camada Silver do PostgreSQL
+        # ---------------------------------------------------------------------------
+        print("\n" + "-"*60)
+        print("[-] Iniciando persistência de dados (LOAD) na Camada Silver...")
+        print("-"*60)
+        
+        # DDL Dinâmica: Garante a criação da nova coluna física na tabela silver_viagem antes de truncar e inserir
+        executar(conexao, "ALTER TABLE silver_viagem ADD COLUMN IF NOT EXISTS destino_estado VARCHAR(100);")
+        
+        # Limpeza prévia para garantir a idempotência absoluta das reexecuções
+        executar(conexao, "TRUNCATE TABLE silver_trecho, silver_passagem, silver_pagamento, silver_viagem CASCADE;")
+        
+        # Carga silver_viagem 
+        colunas_viagem = list(df_silver_viagem.columns)
+        registros_viagem = [tuple(x) for x in df_silver_viagem.itertuples(index=False, name=None)]
+        placeholders_viagem = ", ".join(["%s"] * len(colunas_viagem))
+        sql_viagem = f"INSERT INTO silver_viagem ({', '.join(colunas_viagem)}) VALUES ({placeholders_viagem})"
+        inserir_em_lote(conexao, sql_viagem, registros_viagem)
+        print(f"[SUCCESS] {len(registros_viagem)} linhas persistidas em silver_viagem.")
+        
+        # Carga silver_pagamento
+        colunas_pagamento = list(df_silver_pagamento.columns)
+        registros_pagamento = [tuple(x) for x in df_silver_pagamento.itertuples(index=False, name=None)]
+        placeholders_pagamento = ", ".join(["%s"] * len(colunas_pagamento))
+        sql_pagamento = f"INSERT INTO silver_pagamento ({', '.join(colunas_pagamento)}) VALUES ({placeholders_pagamento})"
+        inserir_em_lote(conexao, sql_pagamento, registros_pagamento)
+        print(f"[SUCCESS] {len(registros_pagamento)} linhas persistidas em silver_pagamento.")
+        
+        # Carga silver_passagem
+        colunas_passagem = list(df_silver_passagem.columns)
+        registros_passagem = [tuple(x) for x in df_silver_passagem.itertuples(index=False, name=None)]
+        placeholders_passagem = ", ".join(["%s"] * len(colunas_passagem))
+        sql_passagem = f"INSERT INTO silver_passagem ({', '.join(colunas_passagem)}) VALUES ({placeholders_passagem})"
+        inserir_em_lote(conexao, sql_passagem, registros_passagem)
+        print(f"[SUCCESS] {len(registros_passagem)} linhas persistidas em silver_passagem.")
+        
+        # Carga silver_trecho
+        colunas_trecho = list(df_silver_trecho.columns)
+        registros_trecho = [tuple(x) for x in df_silver_trecho.itertuples(index=False, name=None)]
+        placeholders_trecho = ", ".join(["%s"] * len(colunas_trecho))
+        sql_trecho = f"INSERT INTO silver_trecho ({', '.join(colunas_trecho)}) VALUES ({placeholders_trecho})"
+        inserir_em_lote(conexao, sql_trecho, registros_trecho)
+        print(f"[SUCCESS] {len(registros_trecho)} linhas persistidas em silver_trecho.")
+        
+        print("\n" + "="*80)
+        print("[SUCCESS] PIPELINE ETL DA CAMADA SILVER CONCLUÍDO COM EXCELÊNCIA!")
+        print("="*80 + "\n")
+        
+    except Exception as e:
+        print(f"\n[ERRO CRÍTICO NO PIPELINE SILVER]: {e}")
+        conexao.rollback()
+        raise e
+    finally:
+        conexao.close()
+
+
+if __name__ == "__main__":
+    executar_etl_silver()

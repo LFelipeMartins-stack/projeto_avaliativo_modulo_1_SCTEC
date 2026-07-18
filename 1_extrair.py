@@ -68,14 +68,14 @@ MAPEAMENTO_COLUNAS = {
     "raw_pagamento": {
         "id_viagem": "Identificador do processo de viagem",
         "num_proposta": "Número da Proposta (PCDP)",
-        "nome_orgao_pagador": "Nome do órgão pagador",
-        "nome_ug_pagadora": "Nome da UG pagadora",
+        "nome_orgao_pagador": "Nome do órgao pagador",
+        "nome_ug_pagadora": "Nome da unidade gestora pagadora",
         "tipo_pagamento": "Tipo de pagamento",
         "valor": "Valor"
     },
     "raw_trecho": {
         "id_viagem": "Identificador do processo de viagem",
-        "sequencia_trecho": "Sequência do trecho",
+        "sequencia_trecho": "Sequência Trecho",  
         "origem_data": "Origem - Data",
         "origem_uf": "Origem - UF",
         "origem_cidade": "Origem - Cidade",
@@ -119,6 +119,60 @@ def obter_indices_colunas(colunas_csv: list, dicionario_mapeamento: dict) -> lis
             indices.append((col_banco, None))
             
     return indices
+
+
+def inspecionar_arquivos_raw():
+    """
+    ETAPA DE DIAGNÓSTICO: Varre os CSVs extraídos em disco para exibir metadados 
+    estruturais relevantes para auditoria e entendimento da carga.
+    """
+    print("\n" + "="*80)
+    print("[INFO] INICIANDO INSPEÇÃO E ENTENDIMENTO DOS DADOS BRUTOS (CAMADA RAW)")
+    print("="*80)
+
+    for chave, meta in ARQUIVOS.items():
+        tabela = meta["tabela_raw"]
+        csv_nome = meta["csv"]
+        caminho_csv = PASTA_DADOS / csv_nome
+
+        if not caminho_csv.exists():
+            print(f"[!] Arquivo para inspeção não encontrado: {caminho_csv}")
+            continue
+
+        print(f"\n---> ANÁLISE ESTRUTURAL DO ARQUIVO: {csv_nome} (Destino: {tabela})")
+        print("-" * 60)
+
+        # Carrega apenas os metadados iniciais para evitar estouro de memória
+        df_amostra = pd.read_csv(caminho_csv, sep=CSV_SEPARADOR, encoding=CSV_ENCODING, nrows=100)
+        
+        # 1. Identificação de Colunas e Mapeamento de Tipos Primitivos
+        print(f"1. COLUNAS DETECTADAS ({len(df_amostra.columns)}):")
+        print(list(df_amostra.columns))
+        
+        print("\n2. TIPOS DE DADOS INTERNOS (Pandas Inferred):")
+        for col, dtype in df_amostra.dtypes.items():
+            print(f"   - {col}: {dtype}")
+
+        # 2. Diagnóstico de Amostra de Dados
+        print("\n3. AMOSTRA DOS PRIMEIROS REGISTROS (head):")
+        # Formata o print para o terminal não quebrar linhas de forma caótica
+        with pd.option_context('display.max_columns', None, 'display.width', 1000):
+            print(df_amostra.head(3))
+
+        # 3. Mapeamento Prévio de Qualidade (Valores Nulos na Amostra)
+        print("\n4. VALORES NULOS DETECTADOS NA AMOSTRA INICIAL:")
+        nulos = df_amostra.isnull().sum()
+        nulos_filtrados = nulos[nulos > 0]
+        if not nulos_filtrados.empty:
+            for col, qtd in nulos_filtrados.items():
+                print(f"   - Coluna '{col}': {qtd} nulos identificados.")
+        else:
+            print("   [OK] Nenhum valor nulo identificado nos registros amostrados.")
+        print("-" * 60)
+
+    print("\n" + "="*80)
+    print("[SUCCESS] DIAGNÓSTICO DA CAMADA RAW CONCLUÍDO COM SUCESSO!")
+    print("="*80 + "\n")
 
 
 def carregar_camada_raw():
@@ -175,7 +229,7 @@ def carregar_camada_raw():
                             valores_linha.append(None)
                     linhas_inserir.append(tuple(valores_linha))
                 
-                # Ingestão física em lote no Postgres (bulk insert performático)
+                # CORREÇÃO AQUI: Passando o argumento de forma posicional como no seu original
                 inserir_em_lote(conexao, sql_insert, linhas_inserir)
                 print(f"[+] Bloco {bloco_num}: {len(linhas_inserir)} linhas persistidas na base.")
                 bloco_num += 1
@@ -192,24 +246,36 @@ def carregar_camada_raw():
 
 def main():
     try:
+        # ______________________________________________________________________________________
+        # SPRINT 1: IMPORTAÇÃO, EXTRAÇÃO E HIGIENIZAÇÃO DE AMBIENTE
+        # ______________________________________________________________________________________
         print("=== INICIANDO PIPELINE DE EXTRAÇÃO (CAMADA RAW) ===")
         
-        # 1. Ajusta o ID do drive
+        # 1. Ajusta o ID do drive para download estável
         file_id = extrair_id_drive(DRIVE_FILE_ID)
         caminho_zip = PASTA_DADOS / "dados.zip"
         
         # Garante a existência física do diretório de armazenamento de dados
         PASTA_DADOS.mkdir(parents=True, exist_ok=True)
         
-        # 2. Executa download via gdown (by-pass automatizado de limites e avisos de vírus)
+        # 2. Executa download via gdown (by-pass de limites estruturais do Google Drive)
         print(f"[*] Solicitando download do arquivo Google Drive ID: {file_id}")
         gdown.download(id=file_id, output=str(caminho_zip), quiet=False)
         print(f"[+] Download concluído com sucesso: {caminho_zip.name}")
         
-        # 3. Executa a descompactação física
+        # 3. Executa a descompactação física dos arquivos no workspace
         extrair_zip(caminho_zip, PASTA_DADOS)
         
-        # 4. Processa a carga estruturada no Postgres
+        # ______________________________________________________________________________________
+        # SPRINT 2: INSPEÇÃO, AUDITORIA E ENTENDIMENTO DOS METADADOS (RAW)
+        # ______________________________________________________________________________________
+        inspecionar_arquivos_raw()
+        
+        # ______________________________________________________________________________________
+        # SPRINT 3: CARGA FÍSICA E PERSISTÊNCIA NO BANCO DE DADOS (POSTGRESQL)
+        # ______________________________________________________________________________________
+        # 4. Processa a carga estruturada no Postgres com controle de concorrência e idempotência
+        print("[*] Iniciando persistência de dados no PostgreSQL...")
         carregar_camada_raw()
         
         print("\n=== PIPELINE DE EXTRAÇÃO CONCLUÍDO COM SUCESSO! ===")
