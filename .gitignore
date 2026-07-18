@@ -5,6 +5,7 @@
 *.zip
 *.csv
 data/
+!data/*.png
 scripts_auxiliadores/
 
 # Ignorar cache do Python
