@@ -32,8 +32,10 @@ O projeto adota a **Arquitetura Medallion** (Raw, Silver e Gold), permitindo o i
 * **Manipulação de Dados:** Pandas
 * **Processamento de Texto:** Expressões Regulares (Regex)
 * **Banco de Dados:** PostgreSQL
-* **Ingestão de Arquivos:** `gdown` (Bypass de segurança estrutural do Google Drive) e `zipfile`
-* **Visualização de Dados:** `plotly` (Gráficos interativos)
+* **Ingestão de Arquivos:** `gdown` e `zipfile`
+* **Visualização Estática/Estatística:** Matplotlib e Seaborn
+* **Visualização Dinâmica/Interativa:** Plotly (Express & Graph Objects)
+* **Interface de Dashboard Contida:** ipywidgets (Componentes interativos no Notebook)
 
 ---
 

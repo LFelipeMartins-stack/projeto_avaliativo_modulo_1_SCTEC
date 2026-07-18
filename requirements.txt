@@ -1,6 +1,10 @@
 pandas
+numpy
 psycopg2-binary
 gdown
 plotly
+matplotlib
+seaborn
+ipywidgets
 python-dotenv
 ipykernel
