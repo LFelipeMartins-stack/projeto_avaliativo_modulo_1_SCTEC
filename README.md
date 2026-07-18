@@ -111,14 +111,23 @@ Com a camada Gold devidamente estruturada e alimentada por dados livres de incon
 
 ### Análise Volumétrica e Eficiência de Tráfego (Pergunta 6 e 5)
 * **Fato:** O Estado de **São Paulo** lidera a frequência absoluta com **82.722 trechos**, seguido de perto pelo **Distrito Federal** com **79.962 trechos**. O meio de transporte massivamente mais utilizado em toda a estrutura é o **Aéreo**.
+
+![Ranking de UFs de Destino Mais Frequentes](data/grafico_ranking_uf.png)
+
 * **Oportunidade de Melhoria:** Dado o tráfego regular e massivo no eixo SP-DF por funcionários da máquina pública, o Ministério da Gestão e Inovação pode negociar **acordos corporativos de longo prazo (*Corporate Travel Agreements*)** diretamente com as companhias aéreas que operam nos *hubs* de Congonhas, Guarulhos e Brasília, fixando tarifas máximas de bilhetes (*capped fares*) para reduzir o impacto financeiro da flutuação da aviação civil comercial.
 
 ### Gestão e Auditoria de Padrões de Despesa
 * **Fato:** A identificação dos 5 órgãos com maior custo total e a segregação do órgão que pagou o maior volume financeiro absoluto permite isolar onde estão os macro-ofensores do orçamento de viagens.
+
+![Maiores Órgãos por Volume de Gastos](data/grafico_maiores_orgaos.png)
+
 * **Oportunidade de Melhoria:** A implementação de políticas restritivas baseadas na **antecedência de compra** (ex: obrigatoriedade de emissão de bilhetes com no mínimo 14 dias de antecedência para viagens ordinárias) foca diretamente na redução do custo médio por trecho nesses órgãos de alta volumetria.
 
 ### Otimização Logística de Itinerários Complexos
 * **Fato:** A análise de custo médio por destino combinada com o rastreamento da **viagem de maior duração** (que cruzou múltiplos dias e acumulou valores elevados de diárias e passagens) joga luz sobre a eficiência das missões institucionais.
+
+![Custo Médio por Destino Principal](data/grafico_custo_destino.png)
+
 * **Oportunidade de Melhoria:** Viagens com durações excessivamente longas e fluxos contínuos de diárias devem ser submetidas a uma matriz de custo-benefício automatizada no sistema de concessão de viagens (SCDP), avaliando se a substituição por agendas concentradas ou reuniões virtuais em plataformas oficiais não atenderia o interesse público com custo zero para os cofres do Estado.
 
 ---
