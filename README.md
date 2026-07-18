@@ -123,7 +123,18 @@ Com a camada Gold devidamente estruturada e alimentada por dados livres de incon
 
 ---
 
-## 6. Como Configurar e Executar o Projeto
+## 7. Melhorias Futuras e Evolução do Pipeline
+
+Para garantir a evolução contínua da governança de dados e a escalabilidade da solução, as seguintes melhorias técnicas foram mapeadas para implementações futuras:
+
+* **Orquestração de Pipeline:** Integração com ferramentas como **Apache Airflow** ou **Prefect** para agendar, monitorar e gerenciar falhas nas execuções de extração e transformação de forma totalmente automatizada.
+* **Segurança e Criptografia Baseada em Consenso:** Implementação de uma camada de segurança robusta para arquivos gerados contendo dados de auditoria sensíveis. Adoção do algoritmo **Shamir's Secret Sharing (SSS)** para garantir que a descriptografia de relatórios estratégicos exija um número mínimo de chaves combinadas de usuários autorizados (M-of-N), elevando o nível de governança e blindagem contra vazamentos.
+* **Monitoramento Qualitativo Automatizado (Data Quality):** Acoplamento da biblioteca **Great Expectations** na transição da camada Raw para a Silver, gerando relatórios visuais automáticos de integridade a cada inserção e disparando alertas em caso de anomalias estruturais.
+* **Conteinerização da Infraestrutura:** Criação de um ambiente isolado via **Docker Compose** contendo o banco de dados PostgreSQL e a aplicação configurada, eliminando divergências de ambiente de execução (*"na minha máquina funciona"*).
+
+---
+
+## 8. Como Configurar e Executar o Projeto
 
 ### Pré-requisitos
 Certifique-se de ter instalado em sua máquina:
