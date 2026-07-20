@@ -139,7 +139,7 @@ Para além das análises estáticas, o projeto entrega uma aplicação analític
 ![Interface do Dashboard Executivo Interativo](data/grafico_dashboard.png)
 
 #### Recursos de Interatividade Implementados:
-* **Filtros Dinâmicos:** Seleção em tempo real por Órgão Superior, Unidade da Federação (UF) de destino e Meio de Transporte.
+* **Filtros Dinâmicos:** Seleção em tempo real por Órgão Superior.
 * **Atualização Reativa:** Recálculo instantâneo do Custo Total Acumulado, Valor Médio de Passagens e Diárias com base nos filtros acionados.
 * **Granularidade Temporal:** Sliders dinâmicos para isolar janelas específicas de meses do ano fiscal auditado.
 
