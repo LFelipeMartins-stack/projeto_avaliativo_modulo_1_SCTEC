@@ -8,4 +8,5 @@ seaborn
 ipywidgets
 python-dotenv
 ipykernel
+notebook
 kaleido

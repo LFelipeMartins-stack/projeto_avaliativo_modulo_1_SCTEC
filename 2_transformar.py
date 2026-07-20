@@ -106,6 +106,57 @@ def tratar_nulos_para_db(df: pd.DataFrame) -> pd.DataFrame:
     """
     return df.astype(object).where(pd.notnull(df), None)
 
+
+def exibir_auditoria_silver_completa(df_v: pd.DataFrame, df_pass: pd.DataFrame, df_pag: pd.DataFrame, df_tr: pd.DataFrame):
+    """
+    Exibe um painel completo de Data Quality e amostragem para as 4 tabelas Silver
+    antes da persistência no banco de dados PostgreSQL.
+    """
+    print("\n" + "📊 " + "=[ PAINEL DE AUDITORIA DE DATA QUALITY - CAMADA SILVER ]".ljust(78, "="))
+    
+    # -------------------------------------------------------------------------
+    # 1. SILVER_VIAGEM
+    # -------------------------------------------------------------------------
+    print("\n🔹 TABELA: silver_viagem")
+    cols_v = ['id_viagem', 'nome_orgao_superior', 'data_inicio', 'duracao_dias', 'valor_diarias', 'valor_total']
+    print("  • Amostra de Registros:")
+    print(df_v[cols_v].head(3).to_string(index=False))
+    print(f"  • Validação Estatística: Duração Média = {df_v['duracao_dias'].mean():.2f} dias | Total Acumulado = R$ {df_v['valor_total'].sum():,.2f}")
+    print(f"  • Quebras de Restrição: Nulos em Órgão Superior = {df_v['nome_orgao_superior'].isna().sum()} | Diárias Negativas = {(df_v['valor_diarias'] < 0).sum()}")
+
+    # -------------------------------------------------------------------------
+    # 2. SILVER_PASSAGEM
+    # -------------------------------------------------------------------------
+    print("\n🔹 TABELA: silver_passagem")
+    cols_pass = ['id_viagem', 'meio_transporte', 'valor_passagem', 'taxa_servico', 'data_emissao']
+    print("  • Amostra de Registros:")
+    print(df_pass[cols_pass].head(3).to_string(index=False))
+    print(f"  • Quebras de Restrição: Nulos na FK (id_viagem) = {df_pass['id_viagem'].isna().sum()}")
+    print(f"  • Check de Negativos: Passagem < 0 = {(df_pass['valor_passagem'] < 0).sum()} | Taxa < 0 = {(df_pass['taxa_servico'] < 0).sum()}")
+
+    # -------------------------------------------------------------------------
+    # 3. SILVER_PAGAMENTO
+    # -------------------------------------------------------------------------
+    print("\n🔹 TABELA: silver_pagamento")
+    cols_pag = ['id_viagem', 'tipo_pagamento', 'valor']
+    print("  • Amostra de Registros:")
+    print(df_pag[cols_pag].head(3).to_string(index=False))
+    print(f"  • Quebras de Restrição: Nulos na FK (id_viagem) = {df_pag['id_viagem'].isna().sum()} | Nulos em Tipo Pagamento = {df_pag['tipo_pagamento'].isna().sum()}")
+    print(f"  • Check de Negativos: Valor Pago < 0 = {(df_pag['valor'] < 0).sum()}")
+
+    # -------------------------------------------------------------------------
+    # 4. SILVER_TRECHO
+    # -------------------------------------------------------------------------
+    print("\n🔹 TABELA: silver_trecho")
+    cols_tr = ['id_viagem', 'sequencia_trecho', 'origem_uf', 'destino_uf', 'numero_diarias']
+    print("  • Amostra de Registros:")
+    print(df_tr[cols_tr].head(3).to_string(index=False))
+    print(f"  • Quebras de Restrição: Nulos na FK (id_viagem) = {df_tr['id_viagem'].isna().sum()}")
+    print(f"  • Check de Negativos: Número de Diárias < 0 = {(df_tr['numero_diarias'] < 0).sum()}")
+    
+    print("\n" + "="*80 + "\n")
+
+
 # ---------------------------------------------------------------------------
 # Etapas do Pipeline (ETL)
 # ---------------------------------------------------------------------------
@@ -178,8 +229,6 @@ def executar_etl_silver():
         data_fim_dt = pd.to_datetime(df_silver_viagem['data_fim'], errors='coerce')
         df_silver_viagem['duracao_dias'] = (data_fim_dt - data_ini_dt).dt.days
         
-        df_silver_viagem = tratar_nulos_para_db(df_silver_viagem)
-        
         # Set de IDs válidos para assegurar a Integridade Referencial (FK) das tabelas filhas
         viagens_validas = set(df_silver_viagem['id_viagem'].tolist())
 
@@ -202,8 +251,6 @@ def executar_etl_silver():
         df_silver_pagamento['nome_ug_pagadora'] = df_raw_pagamento.loc[indices_filtrados, 'nome_ug_pagadora'].apply(limpar_texto_regex)
         df_silver_pagamento['tipo_pagamento'] = df_raw_pagamento.loc[indices_filtrados, 'tipo_pagamento'].apply(limpar_texto_regex).fillna("NÃO INFORMADO")
         df_silver_pagamento['valor'] = limpar_decimal(df_raw_pagamento.loc[indices_filtrados, 'valor'])
-        
-        df_silver_pagamento = tratar_nulos_para_db(df_silver_pagamento)
 
         # ---------------------------------------------------------------------------
         # TRANSFORM: Processamento da Tabela silver_passagem
@@ -229,8 +276,6 @@ def executar_etl_silver():
         df_silver_passagem['valor_passagem'] = limpar_decimal(df_raw_passagem.loc[indices_filtrados, 'valor_passagem'])
         df_silver_passagem['taxa_servico'] = limpar_decimal(df_raw_passagem.loc[indices_filtrados, 'taxa_servico'])
         df_silver_passagem['data_emissao'] = limpar_data(df_raw_passagem.loc[indices_filtrados, 'data_emissao'])
-        
-        df_silver_passagem = tratar_nulos_para_db(df_silver_passagem)
 
         # ---------------------------------------------------------------------------
         # TRANSFORM: Processamento da Tabela silver_trecho
@@ -264,7 +309,24 @@ def executar_etl_silver():
         df_silver_trecho['destino_cidade'] = df_raw_trecho.loc[indices_finais, 'destino_cidade'].apply(limpar_texto_regex)
         df_silver_trecho['meio_transporte'] = df_raw_trecho.loc[indices_finais, 'meio_transporte'].apply(limpar_texto_regex)
         df_silver_trecho['numero_diarias'] = limpar_decimal(df_raw_trecho.loc[indices_finais, 'numero_diarias'])
-        
+
+        # ---------------------------------------------------------------------------
+        #  INJEÇÃO DO PAINEL DE AUDITORIA COMPLETO 
+        # ---------------------------------------------------------------------------
+        exibir_auditoria_silver_completa(
+            df_silver_viagem, 
+            df_silver_passagem, 
+            df_silver_pagamento, 
+            df_silver_trecho
+        )    
+
+        # ---------------------------------------------------------------------------
+        #  Prepara objetos finais normatizados para persistência nativa (NULL no DB)
+        # ---------------------------------------------------------------------------         
+
+        df_silver_viagem = tratar_nulos_para_db(df_silver_viagem)
+        df_silver_pagamento = tratar_nulos_para_db(df_silver_pagamento)
+        df_silver_passagem = tratar_nulos_para_db(df_silver_passagem)
         df_silver_trecho = tratar_nulos_para_db(df_silver_trecho)
 
         # ---------------------------------------------------------------------------

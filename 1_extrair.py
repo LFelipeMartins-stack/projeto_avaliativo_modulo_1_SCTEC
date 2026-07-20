@@ -246,9 +246,9 @@ def carregar_camada_raw():
 
 def main():
     try:
-        # ______________________________________________________________________________________
+        # ---------------------------------------------------------------------------
         # SPRINT 1: IMPORTAÇÃO, EXTRAÇÃO E HIGIENIZAÇÃO DE AMBIENTE
-        # ______________________________________________________________________________________
+        # ---------------------------------------------------------------------------
         print("=== INICIANDO PIPELINE DE EXTRAÇÃO (CAMADA RAW) ===")
         
         # 1. Ajusta o ID do drive para download estável
@@ -266,14 +266,14 @@ def main():
         # 3. Executa a descompactação física dos arquivos no workspace
         extrair_zip(caminho_zip, PASTA_DADOS)
         
-        # ______________________________________________________________________________________
+        # ---------------------------------------------------------------------------
         # SPRINT 2: INSPEÇÃO, AUDITORIA E ENTENDIMENTO DOS METADADOS (RAW)
-        # ______________________________________________________________________________________
+        # ---------------------------------------------------------------------------
         inspecionar_arquivos_raw()
         
-        # ______________________________________________________________________________________
+        # ---------------------------------------------------------------------------
         # SPRINT 3: CARGA FÍSICA E PERSISTÊNCIA NO BANCO DE DADOS (POSTGRESQL)
-        # ______________________________________________________________________________________
+        # ---------------------------------------------------------------------------
         # 4. Processa a carga estruturada no Postgres com controle de concorrência e idempotência
         print("[*] Iniciando persistência de dados no PostgreSQL...")
         carregar_camada_raw()
